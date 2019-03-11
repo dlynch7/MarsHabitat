@@ -43,18 +43,69 @@ function cylWallTask
     robot = init_robot(robot);
     workpiece = gen_pts(workpiece);
     
-    taskspace_pose = [1,0,0,3.5;
-                      0,1,0,3.1;
-                      0,0,1,0.420;
+    robot.thetalist = vertcat(deg2rad([30;60;-30;0;60;120]),...
+        robot.extruder.stroke.min);
+    
+    taskspace_pose = [0,0,1,2.684;
+                      1,0,0,3.317;
+                      0,1,0,0.42;
                       0,0,0,1];
-    taskspace_pose(1,4) = taskspace_pose(1,4) - robot.frames.base.x;
-    taskspace_pose(2,4) = taskspace_pose(2,4) - robot.frames.base.y;
-    taskspace_pose(3,4) = taskspace_pose(3,4) - robot.frames.base.z;
-    [thetalist,robot_pose,exitflag] = robot_IK(taskspace_pose,robot)
+    [thetalist,robot_pose,exitflag] = robot_NRIK(taskspace_pose,robot);
     robot.thetalist = thetalist;
     
     % visualize everything:
     visualize_workspace(perim,slab,robot,workpiece);
+end
+
+%% Compute inverse kinematics (using optimization) for a pose in task space:
+function [thetalist, robot_pose, exitflag] = robot_optIK(taskspace_pose,robot,perim)
+% Description:
+%   Given a desired end-effector location in task space, robot_optIK 
+%   find the 7 joint positions and end-effector orientation by solving a 
+%   nonlinear constrained optimization problem.
+%
+% Optimization problem:
+%   Input vector:
+%       "x" = [q1; q2; q3; q4; q5; q6; ext; theta];
+%       "q1", ..., "q6":    robot arm joint angles [radians] (bounded above
+%       and below to reflect joint limits)
+%
+%       "ext":        extruder position (discrete variable - extruder is
+%       either extended (ext = 0) or retracted (ext =
+%       -robot.extruder.length)
+%
+%       "theta": rotation angle [radians] of extruder about the task-space
+%       vertical axis
+%   Constraints:
+%       "px", "py", "pz": commanded end-effector position in the task-space
+%       frame
+%
+%       perimeter: no part of the robot, including the extruder, may be
+%       outside the x-y-z perimeter of the workspace. Nonlinear inequality
+%       constraint.
+%
+%   Objective function:
+%       
+
+end
+
+%% Compute Newton-Raphson inverse kinematics for a pose in task space:
+function [thetalist, robot_pose, exitflag] = robot_NRIK(taskspace_pose,robot)
+% "taskspace_pose" is the desired end-effector task-space configuration in SE(3)
+fprintf('IK: e-e pose in task-space frame:\n'); taskspace_pose
+
+% express "taskspace_pose" in the robot's base frame, as "robotbase_pose"
+robot_pose = robot.T_task2robot*taskspace_pose;
+fprintf('IK: e-e pose in robot base frame:\n'); robot_pose
+
+% dummy section:
+eomg = 0.01;
+ev = 0.001;
+thetalist0 = vertcat(deg2rad([30;60;-30;0;60;120]),robot.extruder.stroke.min);
+[thetalist, success] = IKinSpace(robot.Slist', robot.M{end}, robot_pose,...
+    thetalist0, eomg, ev);
+exitflag = success;
+
 end
 
 %% Compute forward kinematics for a set of joint positions:
@@ -66,34 +117,19 @@ function [robot] = robot_FK(robot)
 
     % Calculate FK of end-effector, given thetalist:
     T{robot.nJoints + 1} = FKinSpace(robot.M{robot.nJoints + 1}, robot.Slist', robot.thetalist);
+    fprintf('FK: e-e pose in robot base frame:\n');T{end}
 
     % express robot frames in task space (rotate by 90 degrees about z-axis):
     for i = 1:robot.nJoints + 1
        T{i} = robot.T_robot2task*T{i};
     end
+    fprintf('FK: e-e pose in task-space frame:\n');T{end}
 
     for i = 1:robot.nJoints+1
-        robot.frames.joint{i}.x = robot.frames.base.x + T{i}(1,4);
-        robot.frames.joint{i}.y = robot.frames.base.y + T{i}(2,4);
-        robot.frames.joint{i}.z = robot.frames.base.z + T{i}(3,4);
-    end
-end
-
-%% Compute inverse kinematics for a pose in task-space:
-function [thetalist, robot_pose, exitflag] = robot_IK(taskspace_pose,robot)
-% "taskspace_pose" is the desired end-effector task-space configuration in SE(3)
-
-% express "taskspace_pose" in the robot's base frame, as "robotbase_pose"
-robot_pose = robot.T_task2robot*taskspace_pose;
-
-% dummy section:
-eomg = 0.01;
-ev = 0.001;
-thetalist0 = vertcat(deg2rad([30;60;-30;0;60;120]),-1.35);
-[thetalist, success] = IKinSpace(robot.Slist', robot.M{end}, robot_pose,...
-    thetalist0, eomg, ev);
-exitflag = success;
-
+        robot.frames.joint{i}.x = T{i}(1,4);
+        robot.frames.joint{i}.y = T{i}(2,4);
+        robot.frames.joint{i}.z = T{i}(3,4);
+    end    
 end
 
 %% Generate a point cloud approximation of the workpiece:
@@ -104,6 +140,7 @@ function [workpiece] = gen_pts(workpiece)
     
     % sort points vertically
     workpiece.fv.sorted_vertices = sortrows(workpiece.fv.vertices,3);
+%     workpiece.fv.vertices = sortrows(workpiece.fv.vertices,3);
     
     % TODO: use a slicer, maybe
     % https://www.mathworks.com/matlabcentral/fileexchange/62113-slice_stl_create_path-triangles-slice_height
@@ -135,7 +172,10 @@ G = 1.3925;
 % dimensions of prismatic end-effector:
 H = 1.65;   % length of stationary part
 I = 0.2;    % offset between stationary part and mobile part
-J = 1.35;   % lengthof mobile part
+J = 1.35;   % length of mobile part
+
+robot.extruder.stroke.max = 0;
+robot.extruder.stroke.min = -J;
 
 shoulder_x = 0.377;
 shoulder_y = 0;
@@ -270,13 +310,15 @@ robot.frames.base.y = slab.frame.y + 0.5*slab.length_dim;
 robot.frames.base.z = 0;
 
 % transformation from the robot base frame to the task-space frame:
-robot.T_robot2task = [cos(pi/2), -sin(pi/2), 0, 0;
-                sin(pi/2),  cos(pi/2), 0, 0;
-                0,          0,         1, 0;
-                0,          0,         0, 1];
+robot.T_robot2task = [0, -1, 0, robot.frames.base.x;
+                    1, 0, 0, robot.frames.base.y;
+                    0, 0, 1, robot.frames.base.z;
+                    0, 0, 0, 1];
+fprintf('Init: transform from robot base frame to task-space frame:\n'); robot.T_robot2task
             
 % transformation from task-space frame to robot base frame:
 robot.T_task2robot = TransInv(robot.T_robot2task);
+fprintf('Init: transform from task-space frame to robot base frame:\n'); robot.T_task2robot
 
 robot.reach.min_reach = 0.994; % minimum reachable distance from robot base frame
 robot.reach.max_reach = 2.848; % maximum reachable distance from robot base frame
@@ -295,7 +337,6 @@ robot.angles.joints_max = deg2rad([170;85;70;300;130;360;0]);
 robot.angles.joints_min = deg2rad([-170;-65;-180;-300;-130;-360;0]);
 robot.angles.joints_max_ext = deg2rad([0;60;-30;0;60;0;-1.35]);
 robot.angles.joints_min_ext = deg2rad([0;0;-30;0;0;0;-1.35]);
-robot.thetalist = vertcat(deg2rad([30;60;-30;0;60;120]),-1.35);
 
 % workpiece (3D printed cylindrical wall) dimensions
 workpiece.offset.x = 0;
@@ -359,7 +400,7 @@ legend('workspace boundary','slab','workpiece: center',...
     'workpiece: outer wall','robot: base','robot: min reach',...
     'robot: max reach','Location','Best');
 view(80,30); % initialize viewing angle (azimuth, elevation)
-% view(0,90);
+view(0,90);
 xlabel('x [m]')
 ylabel('y [m]')
 zlabel('z [m]')
