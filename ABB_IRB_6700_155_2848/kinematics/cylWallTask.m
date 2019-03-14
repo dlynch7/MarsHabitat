@@ -46,19 +46,49 @@ function cylWallTask
     
     robot.thetalist = vertcat(deg2rad([30;60;-30;0;60;0]));
     
-    taskspace_pose = [0,0,1,2.684;
-                      1,0,0,3.317;
-                      0,1,0,0.62;
-                      0,0,0,1];
-    taskspace_pose = [0,0,1,2.5;
-                      1,0,0,3.0;
-                      0,1,0,0.5;
-                      0,0,0,1];
+    px = 4.5;
+    py = 3.0;
+    pz = 0.0;
+    
+    R_ext = [0,0,1;
+              1,0,0
+              0,1,0];
+    yaw = 0; % radians
+    R_yaw = [cos(yaw), -sin(yaw), 0;
+             sin(yaw),  cos(yaw), 0;
+             0,         0,        1];
+    
+    taskspace_pose = horzcat(vertcat(R_yaw*R_ext, [0,0,0]),[px;py;pz;1]);
+%     taskspace_pose = [0,0,1,px;
+%                       1,0,0,py;
+%                       0,1,0,pz;
+%                       0,0,0,1];
     [thetalist,robot_pose,exitflag] = robot_NRIK(taskspace_pose,robot);
+    [at_lim,thetalist_sat] = at_joint_lim(thetalist,robot)
     robot.thetalist = thetalist;
     
     % visualize everything:
     visualize_workspace(perim,slab,robot,workpiece);
+end
+
+%% Check if any joint angles are at their limits
+function [at_lim,thetalist_sat] = at_joint_lim(thetalist,robot)
+    for i = 1:robot.nJoints
+       if thetalist(i) < robot.angles.joints_min(i)
+           at_lim(i) = -1; % -1 --> joint i is at lower limit
+           thetalist_sat(i) = robot.angles.joints_min(i); % saturate
+           fprintf('theta(%d) = %f, limit is %f.\n',i,...
+               rad2deg(thetalist(i)),rad2deg(robot.angles.joints_min(i)));
+       elseif thetalist(i) > robot.angles.joints_max(i)
+           at_lim(i) = 1; % 1 --> joint i is at upper limit
+           thetalist(i) = robot.angles.joints_max(i); % saturate
+           fprintf('theta(%d) = %f, limit is %f.\n',i,...
+               rad2deg(thetalist(i)),rad2deg(robot.angles.joints_max(i)));
+       else
+           at_lim(i) = 0; % 0 --> joint is within limits
+           thetalist_sat(i) = thetalist(i); % joint i value is unchanged
+       end
+    end
 end
 
 %% Compute inverse kinematics (using optimization) for a pose in task space:
@@ -89,26 +119,112 @@ function [thetalist, robot_pose, exitflag] = robot_optIK(taskspace_pose,robot,pe
 %       constraint.
 %
 %   Objective function:
+%       Minimize the weighted inner-product of the twist from the current
+%       position determined by thetalist_cand to the desired end-effector
+%       pose "taskspace_pose". The weight matrix Q is 6x6 diagonal matrix
+%       that weights wx, wy, wz, vx, vy, vz (in that order).
 %       
 
 end
 
-%% Compute Newton-Raphson inverse kinematics for a pose in task space:
+%% Weighted pseudoinverse for "fat" matrices (more columns than rows)
+function [J_pinv] = weighted_pinv(J,W)
+    if (size(J,2) == size(W,1)) && (~(ismatrix(W) && diff(size(W))))
+        J_pinv = (W\(J'))/((J/W)*(J'));
+    elseif (size(J,2) ~= size(W,1))
+        error('dimension 2 of J and dimension 1 of W do not match.');
+    elseif (~(ismatrix(W) && diff(size(W))))
+        error('W is not a square matrix.');
+    else
+        error('dimensions of J and W do not match.');
+    end
+end
+
+%% Modified Newton-Raphson inverse kinematics for a pose in task space:
+function [thetalist, success] ...
+         = IKinSpaceFreewz(Slist, M, T, thetalist0, eomg, ev, W)
+% *** CHAPTER 6: INVERSE KINEMATICS ***
+% Takes Slist: The joint screw axes in the space frame when the manipulator
+%              is at the home position, in the format of a matrix with the
+%              screw axes as the columns,
+%       M: The home configuration of the end-effector,
+%       T: The desired end-effector configuration Tsd,
+%       thetalist0: An initial guess of joint angles that are close to 
+%                   satisfying Tsd,
+%       eomg: A small positive tolerance on the end-effector orientation 
+%             error. The returned joint angles must give an end-effector 
+%             orientation error less than eomg,
+%       ev: A small positive tolerance on the end-effector linear position 
+%           error. The returned joint angles must give an end-effector 
+%           position error less than ev.
+%       W: a 6x6 (nominally diagonal) matrix that weights the
+%           descent direction used in the Newton-Raphson algorithm.
+% Returns thetalist: Joint angles that achieve T within the specified 
+%                    tolerances,
+%         success: A logical value where TRUE means that the function found
+%                  a solution and FALSE means that it ran through the set 
+%                  number of maximum iterations without finding a solution
+%                  within the tolerances eomg and ev.
+% Uses an iterative Newton-Raphson root-finding method.
+% The maximum number of iterations before the algorithm is terminated has 
+% been hardcoded in as a variable called maxiterations. It is set to 20 at 
+% the start of the function, but can be changed if needed.  
+% Example Inputs:
+% 
+% clear; clc;
+% Slist = [[0; 0;  1;  4; 0;    0], ...
+%        [0; 0;  0;  0; 1;    0], ...
+%        [0; 0; -1; -6; 0; -0.1]];
+% M = [[-1, 0, 0, 0]; [0, 1, 0, 6]; [0, 0, -1, 2]; [0, 0, 0, 1]];
+% T = [[0, 1, 0, -5]; [1, 0, 0, 4]; [0, 0, -1, 1.6858]; [0, 0, 0, 1]];
+% thetalist0 = [1.5; 2.5; 3];
+% eomg = 0.01;
+% ev = 0.001;
+% W = eye(6);
+% [thetalist, success] = IKinSpace(Slist, M, T, thetalist0, eomg, ev, W)
+% 
+% Output:
+% thetalist =
+%    1.5707
+%    2.9997
+%    3.1415
+% success =
+%     1
+
+thetalist = thetalist0;
+i = 0;
+maxiterations = 20;
+Tsb = FKinSpace(M, Slist, thetalist);
+Vs = Adjoint(Tsb) * se3ToVec(MatrixLog6(TransInv(Tsb) * T));
+err = norm(Vs(1: 2)) > eomg || norm(Vs(4: 6)) > ev;
+while err && i < maxiterations
+    thetalist = thetalist + weighted_pinv(...
+        JacobianSpace(Slist, thetalist),W) * Vs;
+    i = i + 1;
+    Tsb = FKinSpace(M, Slist, thetalist);
+    Vs = Adjoint(Tsb) * se3ToVec(MatrixLog6(TransInv(Tsb) * T));
+    err = norm(Vs(1: 2)) > eomg || norm(Vs(4: 6)) > ev;
+end
+thetalist = wrapToPi(thetalist);
+success = ~ err;
+end
+
+%% Wrapper fcn for Newton-Raphson inverse kinematics for a pose in task space:
 function [thetalist, robot_pose, exitflag] = robot_NRIK(taskspace_pose,robot)
 % "taskspace_pose" is the desired end-effector task-space configuration in SE(3)
-fprintf('IK: e-e pose in task-space frame:\n'); taskspace_pose
+% fprintf('IK: e-e pose in task-space frame:\n'); taskspace_pose
 
 % express "taskspace_pose" in the robot's base frame, as "robotbase_pose"
 robot_pose = robot.T_task2robot*taskspace_pose;
-fprintf('IK: e-e pose in robot base frame:\n'); robot_pose
+% fprintf('IK: e-e pose in robot base frame:\n'); robot_pose
 
-% dummy section:
 eomg = 0.01;
 ev = 0.001;
-thetalist0 = deg2rad([30;60;-30;0;60;120]);
-[thetalist, success] = IKinSpace(robot.Slist(1:robot.nJoints,:)', ...
+W = diag([100;100;10;1;0.1;0.01]); % weight matrix - biases NR-IK descent direction
+thetalist0 = deg2rad([30;60;-30;0;60;90]);
+[thetalist, success] = IKinSpaceFreewz(robot.Slist(1:robot.nJoints,:)', ...
     robot.M{robot.nJoints+1}, robot_pose, thetalist0(1:robot.nJoints),...
-    eomg, ev);
+    eomg, ev, W);
 exitflag = success;
 
 end
@@ -345,10 +461,10 @@ robot.reach.max_reach_circle.y = robot.frames.base.y + ...
 
 % default "thetalist"s for robot
 robot.angles.joints_home = [0;0;0;0;0;0;-1.35];
-robot.angles.joints_max = deg2rad([170;85;70;300;130;360;0]);
-robot.angles.joints_min = deg2rad([-170;-65;-180;-300;-130;-360;0]);
 robot.angles.joints_max_ext = deg2rad([0;60;-30;0;60;0;-1.35]);
 robot.angles.joints_min_ext = deg2rad([0;0;-30;0;0;0;-1.35]);
+robot.angles.joints_max = deg2rad([170;85;70;300;130;360]);
+robot.angles.joints_min = deg2rad([-170;-65;-180;-300;-130;-360]);
 
 % workpiece (3D printed cylindrical wall) dimensions
 workpiece.offset.x = 0;
@@ -407,9 +523,13 @@ end
 axis([-1, perim.width_dim + 3, -1, perim.length_dim + 3, 0, perim.height_dim]);
 pbaspect([perim.width_dim, perim.length_dim, perim.height_dim]/perim.width_dim)
 
-legend('workspace boundary','slab','workpiece: center',...
-    'workpiece: outer wall','robot: base','robot: min reach',...
+legend('workspace boundary','slab',...
+    'workpiece: center','workpiece: outer wall',...
+    'robot: base','robot: min reach',...
     'robot: max reach','Location','Best');
+% legend('workspace boundary','slab',...
+%     'robot: base','robot: min reach',...
+%     'robot: max reach','Location','Best');
 view(80,30); % initialize viewing angle (azimuth, elevation)
 % view(0,90);
 xlabel('x [m]')
