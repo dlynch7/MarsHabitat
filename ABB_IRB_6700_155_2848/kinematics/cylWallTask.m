@@ -28,6 +28,9 @@ function cylWallTask
     % add Modern Robotics library to path:
     addpath('/home/daniel/ModernRobotics/packages/MATLAB/mr');
     
+    % add visualization code to path:
+    addpath([pwd,'/../visuals']);
+    
     % add stlread.m to path:
     addpath([pwd,'/../../STL_and_related/STLRead']);
     
@@ -266,14 +269,14 @@ function [robot] = robot_FK(robot)
 
     % express robot frames in task space (rotate by 90 degrees about z-axis):
     for i = 1:robot.nJoints + 1
-       T{i} = robot.T_robot2task*T{i};
+       robot.T{i} = robot.T_robot2task*T{i};
     end
 %     fprintf('FK: e-e pose in task-space frame:\n');T{robot.nJoints + 1}
 
     for i = 1:robot.nJoints+1
-        robot.frames.joint{i}.x = T{i}(1,4);
-        robot.frames.joint{i}.y = T{i}(2,4);
-        robot.frames.joint{i}.z = T{i}(3,4);
+        robot.frames.joint{i}.x = robot.T{i}(1,4);
+        robot.frames.joint{i}.y = robot.T{i}(2,4);
+        robot.frames.joint{i}.z = robot.T{i}(3,4);
     end    
 end
 
@@ -527,20 +530,26 @@ plot3(robot.reach.max_reach_circle.x,robot.reach.max_reach_circle.y,...
 % plot robot:
 [robot] = robot_FK(robot);
 
-cc = lines(robot.nJoints + 1);
-joint_marker_size = 50;
-link_line_width = 10;
-plot3(robot.frames.joint{1}.x,robot.frames.joint{1}.y,robot.frames.joint{1}.z,...
-    '.','Color',cc(1,:),'MarkerSize',joint_marker_size);
-for i = 2:robot.nJoints + 1
-   plot3(robot.frames.joint{i}.x,robot.frames.joint{i}.y,...
-    robot.frames.joint{i}.z,'.','Color',cc(i,:),...
-       'MarkerSize',joint_marker_size);
-   line([robot.frames.joint{i-1}.x,robot.frames.joint{i}.x],...
-       [robot.frames.joint{i-1}.y,robot.frames.joint{i}.y],...
-       [robot.frames.joint{i-1}.z,robot.frames.joint{i}.z],...
-       'Color',cc(i,:),'LineWidth',link_line_width);
+for i = 1:robot.nJoints
+   T{i} = robot.T{i}; 
 end
+
+out = simulate(T,[.2 .15 .15 .15 .1 .2])
+
+% cc = lines(robot.nJoints + 1);
+% joint_marker_size = 50;
+% link_line_width = 10;
+% plot3(robot.frames.joint{1}.x,robot.frames.joint{1}.y,robot.frames.joint{1}.z,...
+%     '.','Color',cc(1,:),'MarkerSize',joint_marker_size);
+% for i = 2:robot.nJoints + 1
+%    plot3(robot.frames.joint{i}.x,robot.frames.joint{i}.y,...
+%     robot.frames.joint{i}.z,'.','Color',cc(i,:),...
+%        'MarkerSize',joint_marker_size);
+%    line([robot.frames.joint{i-1}.x,robot.frames.joint{i}.x],...
+%        [robot.frames.joint{i-1}.y,robot.frames.joint{i}.y],...
+%        [robot.frames.joint{i-1}.z,robot.frames.joint{i}.z],...
+%        'Color',cc(i,:),'LineWidth',link_line_width);
+% end
 
 hold off;
 
