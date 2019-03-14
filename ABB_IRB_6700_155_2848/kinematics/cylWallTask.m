@@ -12,7 +12,7 @@
 %       https://github.com/NxRLab/ModernRobotics/tree/master/packages/MATLAB
 %   2 - stlread.m (imports STL file as a struct with fields "faces" and
 %   "vertices" - super handy
-%
+%rm 
 % Author:
 %   Dan Lynch
 %
@@ -46,33 +46,55 @@ function cylWallTask
     
     robot.thetalist = vertcat(deg2rad([30;60;-30;0;60;0]));
     
-    px = 4.5;
-    py = 3.0;
-    pz = 0.0;
+    wall_rot_angle = linspace(0,2*pi,101);
+    wall_height_list = linspace(min(workpiece.points.z),...
+        max(workpiece.points.z),5);
     
-    R_ext = [0,0,1;
-              1,0,0
-              0,1,0];
-    yaw = 0; % radians
-    R_yaw = [cos(yaw), -sin(yaw), 0;
-             sin(yaw),  cos(yaw), 0;
-             0,         0,        1];
+    for i = 1:numel(wall_height_list)
+        for j = 1:numel(wall_rot_angle)
+            px = workpiece.outline.x(j);
+            py = workpiece.outline.y(j);
+            pz = wall_height_list(i);
+
+            R_ext = [0,0,1;
+                     1,0,0
+                     0,1,0];
+            yaw = extruder_yaw_lookup(px,py,pz,workpiece);
+            R_yaw = [cos(yaw), -sin(yaw), 0;
+                     sin(yaw),  cos(yaw), 0;
+                     0,         0,        1];
+
+            taskspace_pose = horzcat(vertcat(R_yaw*R_ext, [0,0,0]),[px;py;pz;1]);
+            [thetalist,robot_pose,exitflag] = robot_NRIK(taskspace_pose,robot);
+            if exitflag == 0
+                fprintf('Inverse kinematics failed for (px,py,pz) = (%f,%f,%f)\n',...
+                    px,py,pz);
+            end
+            [at_lim,thetalist_sat] = at_joint_lim(thetalist,robot);
+            robot.thetalist = thetalist_sat;
+
+            % visualize everything:
+            visualize_workspace(perim,slab,robot,workpiece);
+            drawnow;
+        end
+    end
+end
+
+%% Lookup table of extruder yaw angle as a function of nozzle location
+function yaw_rad = extruder_yaw_lookup(px,py,pz,workpiece)
+    max_yaw = pi/8;
+    min_yaw = -pi/4;
     
-    taskspace_pose = horzcat(vertcat(R_yaw*R_ext, [0,0,0]),[px;py;pz;1]);
-%     taskspace_pose = [0,0,1,px;
-%                       1,0,0,py;
-%                       0,1,0,pz;
-%                       0,0,0,1];
-    [thetalist,robot_pose,exitflag] = robot_NRIK(taskspace_pose,robot);
-    [at_lim,thetalist_sat] = at_joint_lim(thetalist,robot)
-    robot.thetalist = thetalist;
+    y_max = max(workpiece.points.y);
+    y_min = min(workpiece.points.y);
     
-    % visualize everything:
-    visualize_workspace(perim,slab,robot,workpiece);
+    yaw_rad = ((py-y_min)/(y_max - y_min))*(max_yaw - min_yaw) + min_yaw;
+
 end
 
 %% Check if any joint angles are at their limits
 function [at_lim,thetalist_sat] = at_joint_lim(thetalist,robot)
+    thetalist_sat = zeros(size(thetalist));
     for i = 1:robot.nJoints
        if thetalist(i) < robot.angles.joints_min(i)
            at_lim(i) = -1; % -1 --> joint i is at lower limit
@@ -196,14 +218,14 @@ i = 0;
 maxiterations = 20;
 Tsb = FKinSpace(M, Slist, thetalist);
 Vs = Adjoint(Tsb) * se3ToVec(MatrixLog6(TransInv(Tsb) * T));
-err = norm(Vs(1: 2)) > eomg || norm(Vs(4: 6)) > ev;
+err = norm(Vs(1: 3)) > eomg || norm(Vs(4: 6)) > ev;
 while err && i < maxiterations
     thetalist = thetalist + weighted_pinv(...
         JacobianSpace(Slist, thetalist),W) * Vs;
     i = i + 1;
     Tsb = FKinSpace(M, Slist, thetalist);
     Vs = Adjoint(Tsb) * se3ToVec(MatrixLog6(TransInv(Tsb) * T));
-    err = norm(Vs(1: 2)) > eomg || norm(Vs(4: 6)) > ev;
+    err = norm(Vs(1: 3)) > eomg || norm(Vs(4: 6)) > ev;
 end
 thetalist = wrapToPi(thetalist);
 success = ~ err;
@@ -460,19 +482,19 @@ robot.reach.max_reach_circle.y = robot.frames.base.y + ...
     robot.reach.max_reach*sin(linspace(0,2*pi,101));
 
 % default "thetalist"s for robot
-robot.angles.joints_home = [0;0;0;0;0;0;-1.35];
+robot.angles.joints_home = [0;0;0;0;0;0];
 robot.angles.joints_max_ext = deg2rad([0;60;-30;0;60;0;-1.35]);
 robot.angles.joints_min_ext = deg2rad([0;0;-30;0;0;0;-1.35]);
 robot.angles.joints_max = deg2rad([170;85;70;300;130;360]);
 robot.angles.joints_min = deg2rad([-170;-65;-180;-300;-130;-360]);
 
 % workpiece (3D printed cylindrical wall) dimensions
-workpiece.offset.x = 0;
-workpiece.offset.y = 1;
-workpiece.radii.outer_radius = 1.1;
-workpiece.radii.inner_radius = 1.0;
-workpiece.frame.x = robot.frames.base.x + workpiece.radii.outer_radius + workpiece.offset.x;
-workpiece.frame.y = robot.frames.base.y + workpiece.radii.outer_radius + workpiece.offset.y;
+workpiece.offset.x = 1;
+workpiece.offset.y = 2;
+workpiece.radii.outer_radius = 1.7/2;
+workpiece.radii.inner_radius = 1.5/2;
+workpiece.frame.x = robot.frames.base.x + workpiece.offset.x;
+workpiece.frame.y = robot.frames.base.y + workpiece.offset.y;
 workpiece.frame.z = 0;
 workpiece.outline.x = workpiece.frame.x + workpiece.radii.outer_radius*sin(linspace(0,2*pi,101));
 workpiece.outline.y = workpiece.frame.y + workpiece.radii.outer_radius*cos(linspace(0,2*pi,101));
@@ -481,7 +503,7 @@ end
 
 %% Visualize workspace
 function visualize_workspace(perim,slab,robot,workpiece)
-figure;
+% figure;
 % plot workspace perimeter:
 plot3(horzcat(perim.x_coords,perim.Ax),horzcat(perim.y_coords,perim.Ay),...
     zeros(1,length(perim.x_coords)+1),'k-');
@@ -520,7 +542,9 @@ for i = 2:robot.nJoints + 1
        'Color',cc(i,:),'LineWidth',link_line_width);
 end
 
-axis([-1, perim.width_dim + 3, -1, perim.length_dim + 3, 0, perim.height_dim]);
+hold off;
+
+axis([-1, perim.width_dim + 3, -1, perim.length_dim + 3, -0.5, perim.height_dim]);
 pbaspect([perim.width_dim, perim.length_dim, perim.height_dim]/perim.width_dim)
 
 legend('workspace boundary','slab',...
