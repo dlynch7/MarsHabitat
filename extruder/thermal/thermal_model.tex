@@ -1,0 +1,153 @@
+\documentclass{article}
+
+\usepackage[margin=1.0in]{geometry}
+\usepackage{amsmath}
+\usepackage{xspace}
+\usepackage{footnote}
+
+\newcommand*{\eg}{e.g.\@\xspace}
+\newcommand*{\ie}{i.e.\@\xspace}
+
+\makeatletter
+\newcommand*{\etc}{%
+    \@ifnextchar{.}%
+        {etc}%
+        {etc.\@\xspace}%
+}
+\makeatother
+
+\title{Thermal model of Marscrete extrusion}
+\author{Daniel Lynch\\
+        Mechanical Engineering \& NxR Lab\\
+        Northwestern University\\
+        daniellynch2021 [at] u [dot] northwestern [dot] edu
+        }
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Short abstract
+\end{abstract}
+
+\tableofcontents
+
+\section[Objective]{Objective}
+This document describes a (hopefully) simple lumped-mass thermal model of Marscrete extrusion.
+By modeling Marscrete extrusion as a system of differential equations, I hope to be able to draw conclusions about the controllability and observability of the thermal system.
+
+In particular, there are two questions to address:
+\begin{itemize}
+\item \textbf{Controllability:} is it possible to pump heat into the system (as a function of time) in a way that drives the temperature profile (as a function of position) from an initial profile to a desired one?
+\item \textbf{Observability:} is it possible to determine the current temperature profile (as a function of position), given the history of heat added to the system and the history of temperature sensor measurements?
+\end{itemize}
+
+Depending on whether the thermal system is controllable and/or observable, it may be possible to further design controllers and estimators:
+\begin{itemize}
+\item It may be possible to optimize the heat input (control) signal to minimize various objective functions while satisfying certain constraints.
+\item Observability can be used as a criterion to determine the viability of different temperature sensor placements.
+\item It may be possible to estimate the temperature-vs-position profile using an observer such as a Kalman filter and a reduced sensor set.
+\end{itemize}
+
+\section[Motivating example - pipe flow]{Motivating example - pipe flow}
+
+\section[Modeling]{Modeling}
+\subsection[Control input: heat flux]{Control input: heat flux}
+The heating mechanism (\ie the control input) for the extruder operates via Joule heating: 
+\begin{equation}
+q_{\textrm{control}} = i^2 R\text{,} 
+\end{equation}
+where the heat delivered to the extruder is a consequence of Ohm's law, with current $i$ and wire resistance $R$.
+Over a finite area $A$, this results in a heat flux
+\begin{equation}
+q^{''} = \frac{i^2 R}{A}\text{.}
+\end{equation}
+
+\subsection[One-dimensional heat equation - first pass]{One-dimensional heat equation - first pass}
+As a basic example, consider the heat equation, in one dimension ($x$), with an internal heat source $\dot{q}$.
+\begin{equation}
+\frac{\partial u}{\partial t} - \alpha^2\frac{\partial^2 u}{\partial x^2} = \dot{q}\text{,}
+\end{equation}
+where $u$ is the temperature of the material and $x \in \left[0,L\right]$, where $L$ is the length of the material.
+
+\subsubsection{Homogeneous solution}
+The homogeneous one-dimensional heat equation\footnote{This solution is from Bill Goodwine's \textit{Engineering Differential Equations: Theory and Applications}.} is
+\begin{equation}
+\frac{\partial u}{\partial t} - \alpha^2\frac{\partial^2 u}{\partial x^2} = 0\text{,}
+\end{equation}
+with homogeneous boundary conditions
+\begin{equation}
+u(0,t) = u(L,t) = 0\text{ and }u(x,0) = f(x)\text{.}
+\end{equation}
+
+Start off with the separation of variables ansatz:
+\begin{equation}
+u(x,t) = X(x)T(t)\text{,}
+\end{equation}
+so that
+\begin{subequations}
+\begin{equation}
+\frac{\partial u}{\partial t} = X(x)T'(t)\text{,}
+\end{equation}
+\begin{equation}
+\frac{\partial u}{\partial x} = X'(x)T(t)\rightarrow \frac{\partial^2 u}{\partial x^2} = X''(x)T(t)\text{,}
+\end{equation}
+\end{subequations}
+and substitute this expression for $u$ back into the homogeneous 1-D heat equation:
+\begin{equation}
+\frac{T'(t)}{\alpha^2 T(t)} = \frac{X''(x)}{X(x)}\text{,}
+\end{equation}
+and because the left-hand side and right-hand side are independent, both sides must be equal to a constant:
+\begin{equation}
+\frac{X''(x)}{X(x)} = \frac{T'(t)}{\alpha^2 T(t)} = -\lambda \rightarrow
+\begin{cases}
+X''(x) + \lambda X(x) = 0\text{,}\\
+T'(t) + \lambda \alpha^2 T(t) = 0\text{.}
+\end{cases}
+\end{equation}
+
+We can now solve for $X(x)$ and $T(t)$ separately. First, the general solution for $X(x)$ is
+\begin{equation}
+X(x) = c_1\sin\left(\sqrt{\lambda}x\right) + c_2\cos\left(\sqrt{\lambda}x\right)\text{.}
+\end{equation}
+Enforcing the left-hand boundary condition $u(0,t) = 0$ implies $c_2 = 0$. From the right-hand boundary condition,
+\begin{equation}
+u(L,t) = X(L) = c_1\sin\left(\sqrt{\lambda}L\right) = 0\Rightarrow\lambda = \left(\frac{n\pi}{L}\right)^2\text{, }n = 1,2,3,...\text{,}
+\end{equation}
+and therefore
+\begin{equation}
+X_n(x) = c_n\sin\left(\frac{n\pi x}{L}\right)\text{.}
+\end{equation}
+
+Now, the solution for $T(t)$ is
+\begin{equation}
+T(t) = A\operatorname{e}^{-\left(\alpha n \pi/L\right)^2 t}\text{,}
+\end{equation}
+where $A$ is some constant yet to be determined.
+In fact, since both $A$ and $c_n$ are unknown at this point, we can group them together in a new series of constants $c_n$, resulting in the following general solution:
+\begin{equation}
+\boxed{u(x,t) = \sum_{n=1}^{\infty} c_n\sin\left(\frac{n\pi x}{L}\right)\operatorname{e}^{-\left(\alpha n \pi/L\right)^2 t}}
+\end{equation}
+
+The last step to finding the general solution is to determine $c_n$ by applying the remaining boundary condition $u(x,0) = f(x)$:
+\begin{equation}
+\sum_{n=1}^{\infty} c_n \sin\left(\frac{n \pi x}{L}\right) = f(x)\text{.}
+\end{equation}
+To express the initial temperature profile $f(x)$ as a Fourier sine series, first multiply both sides by $\sin\left(\frac{m \pi x}{L}\right)$ and integrate from $0$ to $L$:
+\begin{equation}
+\int_0^L \sin\left(\frac{m \pi x}{L}\right)c_n\sin\left(\frac{n \pi x}{L}\right) \mathrm{d}x =
+\int_0^L \sin\left(\frac{m \pi x}{L}\right)f(x) \mathrm{d}x\text{,}
+\end{equation}
+which evaluates to $0$ everywhere except when $m = n$, resulting in
+\begin{equation}
+c_n \int_0^L \sin^2\left(\frac{n \pi x}{L}\right) \mathrm{d}x = \int_0^L \sin\left(\frac{n \pi x}{L}\right)f(x) \mathrm{d}x\text{,}
+\end{equation}
+which evaluates to
+\begin{equation}
+\boxed{c_n = \frac{2}{L}\int_0^L \sin\left(\frac{n \pi x}{L}\right)f(x)\mathrm{d}x}
+\end{equation}
+
+\subsubsection{Nonhomegeneous solution}
+
+\end{document}
