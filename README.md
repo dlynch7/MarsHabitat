@@ -15,10 +15,14 @@ Currently, we are using ABB's RobotStudio (a proprietary closed-source Windows-o
 
 #### Path forward
 While we are restricted to using RobotStudio to generate RAPID files which the arm takes as instructions, there may be a workaround that lets us use the full range of motion of the outermost joint.
-
 * If RobotStudio supports the [M19](http://www.helmancnc.com/m19-spindle-orientation-m119-sub-spindle-orientation/) G Code command (spindle orientation), it should be possible to expand the MATLAB script to generate G Code and assign the outermost joint angle to that M19 code.
 
 * If RobotStudio does not support the M19 command, we will have to contact their tech support team for help.
+
+There are many other things worth working on, within motion control and planning:
+* Inverse velocity kinematics
+* Modeling the dynamics of the arm with the extruder attached
+* Formulating the path-planning and inverse kinematics as a constrained nonlinear optimization problem, and solving it with MATLAB's `fmincon`.
 
 
 ### Extruder: modeling and thermal control
