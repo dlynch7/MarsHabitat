@@ -1,0 +1,13 @@
+Rought notes for development, 4/8/19:
+
+For temperature control: 
+   (1) one microcontroller per pair of sensor-actuator
+   (2) break the extruder pipe length into segments - research available actuators or how to make one from scratch
+   (3) develop an idea of thermal time constant - possible develop thermal model (review in detail model's already created)
+   (4) develop testing protocol 
+   (5) research sensor placement - pipe surface, throughhole - sensor touch material, etc. 
+   
+For control integration:
+  (1) use ethernet connection to component level control
+  (2) dedicate 1 computer to serve as main computer to to high-level control of entire system (smilar to PLC)
+    (a) incorporate safety, first and foremost 
